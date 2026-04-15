@@ -1,59 +1,69 @@
-import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
 import transporter from "./transporter.js";
-import successMailTemplate from "./successTemplate.js";
 import connectDB from "../config/db.js";
 import Team from "../models/Team.js";
+import certificateTemplate from "./certificateTemplate.js";
 import delay from "../utils/delay.js";
 
-dotenv.config();
+const CERT_PATH = "./certificates"; // local folder
 
-/* ====== MAIN FUNCTION ====== */
-const sendConfirmationMails = async () => {
+const sendCertificates = async () => {
   try {
-    console.log("⏳ Connecting DB...");
     await connectDB();
 
-    console.log("📨 Fetching eligible teams (__v:1 only)...");
-
-    // ✅ ONLY __v: 1 wale teams
     const teams = await Team.find({ __v: 1 });
 
-    if (teams.length === 0) {
-      console.log("⚠ No eligible teams found.");
-      process.exit(0);
-    }
-
-    console.log(`🚀 Sending confirmation to ${teams.length} teams...\n`);
+    console.log(`📨 Sending certificates to ${teams.length} teams...\n`);
 
     for (const team of teams) {
-      try {
-        await transporter.sendMail({
-          from: `"Team Conatus" <${process.env.MAIL_SENDER}>`,
-          to: team.leader.email,
-          subject: "Registration Confirmed - Cipher of Hawkins 🎉",
-          html: successMailTemplate({
-            name: team.teamName,
-            leaderName: team.leader.name,
-            members: team.members,
-          }),
-        });
+      const teamFolder = path.join(CERT_PATH, team.teamName);
 
-        console.log(`✅ Sent to: ${team.leader.email}`);
-      } catch (err) {
-        console.log(`❌ Failed: ${team.leader.email}`);
+      // leader + members combine
+      const allMembers = [
+        { name: team.leader.name, email: team.leader.email },
+        ...team.members,
+      ];
+
+      for (const member of allMembers) {
+        try {
+          const filePath = path.join(teamFolder, `${member.name}.pdf`);
+
+          if (!fs.existsSync(filePath)) {
+            console.log(`⚠ Missing: ${filePath}`);
+            continue;
+          }
+
+          await transporter.sendMail({
+            from: `"Team Conatus" <${process.env.MAIL_SENDER}>`,
+            to: member.email,
+            subject: "🎉 Certificate of Participation - Cipher of Hawkins",
+            html: certificateTemplate(member.name),
+
+            attachments: [
+              {
+                filename: `${member.name}_certificate.pdf`,
+                path: filePath,
+              },
+            ],
+          });
+
+          console.log(`✅ Sent: ${member.email}`);
+        } catch (err) {
+          console.log(`❌ Failed: ${member.email}`);
+        }
+
+        await delay(2000);
       }
-
-      // ⏳ Delay (spam avoid)
-      await delay(3000);
     }
 
-    console.log("\n🎉 All confirmation mails sent!");
+    console.log("\n🎉 All certificates sent!");
     process.exit(0);
-  } catch (error) {
-    console.error("❌ Confirmation mail error:", error.message);
+
+  } catch (err) {
+    console.error("❌ Error:", err.message);
     process.exit(1);
   }
 };
 
-/* ===== RUN SCRIPT ===== */
-sendConfirmationMails();
+sendCertificates();
